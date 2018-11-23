@@ -7,10 +7,14 @@
 @contact: wangchen100@163.com
 @create_time: 18-11-22 下午8:25
 '''
+import os
+import shutil
 import argparse
+import tensorflow as tf
 import multiprocessing as mp
 import threading
-import inference as agent
+import inference
+
 
 parser = argparse.ArgumentParser(description='Active Neural Localization')
 
@@ -19,41 +23,60 @@ parser.add_argument('-l', '--max-episode-length', type=int,
                     default=30, metavar='L',
                     help='maximum length of an episode (default: 30)')
 parser.add_argument('-m', '--map-size', type=int, default=7,
-                    help='''m: Size of the maze m x m (default: 7),
-                            must be an odd natural number''')
+                    help='m: Size of maze m x m (default: 7), must be an odd natural number')
 
 # A3C and model arguments
 parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                     help='learning rate (default: 0.001)')
-parser.add_argument('--num-iters', type=int, default=1000000, metavar='NS',
-                    help='''number of training iterations per training thread
-                            (default: 10000000)''')
+parser.add_argument('--num-iters', type=int, default=1e6, metavar='NS',
+                    help='number of training iterations per training thread (default: 1e6)')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
                     help='discount factor for rewards (default: 0.99)')
-parser.add_argument('--tau', type=float, default=1.00, metavar='T',
+parser.add_argument('--tau', type=float, default=1.0, metavar='T',
                     help='parameter for GAE (default: 1.00)')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
-parser.add_argument('-n', '--num-processes', type=int, default=8, metavar='N',
-                    help='how many training processes to use (default: 8)')
 parser.add_argument('--num-steps', type=int, default=20, metavar='NS',
                     help='number of forward steps in A3C (default: 20)')
 parser.add_argument('--hist-size', type=int, default=5,
                     help='action history size (default: 5)')
-parser.add_argument('--load', type=str, default="0",
-                    help='model path to load, 0 to not reload (default: 0)')
-parser.add_argument('-e', '--evaluate', type=int, default=0,
-                    help='0:Train, 1:Evaluate on test data (default: 0)')
-parser.add_argument('-d', '--dump-location', type=str, default="./saved/",
-                    help='path to dump models and log (default: ./saved/)')
-parser.add_argument('-td', '--test-data', type=str,
-                    default="./test_data/m7_n1000.npy",
-                    help='''Test data filepath
-                            (default: ./test_data/m7_n1000.npy)''')
+parser.add_argument('--log', type=str, default="./log/",
+                    help='path to save graph')
+
 
 if __name__ == '__main__':
-  args = parser.parse_args()
+    args = parser.parse_args()
+    N_WORKERS = mp.cpu_count()
 
+    SESS = tf.Session()
 
+    with tf.device("/cpu:0"):
+        OPT = tf.train.RMSPropOptimizer(args.lr, name='RMSPropA')
+        # OPT_C = tf.train.RMSPropOptimizer(args.lr, name='RMSPropC')
+        GLOBAL_AC = inference.ACNet('global')  # we only need its params
+        workers = []
+        # Create worker
+        for i in range(N_WORKERS):
+            i_name = 'W_%i' % i   # worker name
+            workers.append(inference.Worker(i_name, (GLOBAL_AC, SESS, OPT)))
 
+    COORD = tf.train.Coordinator()
+    SESS.run(tf.global_variables_initializer())
+
+    if args.log == 'No':
+        if os.path.exists(args.log):
+            shutil.rmtree(args.log)
+        tf.summary.FileWriter(args.log, SESS.graph)
+
+    worker_threads = []
+    for worker in workers:
+        t = threading.Thread(target=worker.work())
+        t.start()
+        worker_threads.append(t)
+    COORD.join(worker_threads)
+
+    #plt.plot(np.arange(len(GLOBAL_RUNNING_R)), GLOBAL_RUNNING_R)
+    #plt.xlabel('step')
+    #plt.ylabel('Total moving reward')
+    #plt.show()
 
