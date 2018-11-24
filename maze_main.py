@@ -54,13 +54,14 @@ if __name__ == '__main__':
         OPT = tf.train.RMSPropOptimizer(args.lr, name='RMSPropA')
         # OPT_C = tf.train.RMSPropOptimizer(args.lr, name='RMSPropC')
         GLOBAL_AC = inference.ACNet('global')  # we only need its params
+        COORD = tf.train.Coordinator()
+
         workers = []
         # Create worker
         for i in range(N_WORKERS):
             i_name = 'W_%i' % i   # worker name
-            workers.append(inference.Worker(i_name, (GLOBAL_AC, SESS, OPT)))
+            workers.append(inference.Worker(i_name, (GLOBAL_AC, OPT, SESS, COORD)))
 
-    COORD = tf.train.Coordinator()
     SESS.run(tf.global_variables_initializer())
 
     if args.log == 'No':
