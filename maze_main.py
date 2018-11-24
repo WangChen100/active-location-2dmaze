@@ -1,12 +1,12 @@
 # encoding: utf-8
-'''
+"""
 @project: active-navigation-2dmaze
 @file: maze_main.py
 @version:
 @author: wangchen
 @contact: wangchen100@163.com
 @create_time: 18-11-22 下午8:25
-'''
+"""
 import os
 import shutil
 import argparse
@@ -20,9 +20,11 @@ parser = argparse.ArgumentParser(description='Active Neural Localization')
 
 parser.add_argument('--train', type=bool, default=False,
                     help='True(default): Train; False: Test on testing data')
+parser.add_argument('--log', type=str, default="./log/",
+                    help='path to save graph')
 
 # Environment arguments
-parser.add_argument('-l', '--max-episode-length', type=int, default=30, metavar='L',
+parser.add_argument('-l', '--max-ep', type=int, default=30, metavar='L',
                     help='maximum length of an episode (default: 30)')
 parser.add_argument('-m', '--map-size', type=int, default=7,
                     help='m(default: 7): Size of maze must be an odd natural number')
@@ -30,20 +32,16 @@ parser.add_argument('-m', '--map-size', type=int, default=7,
 # A3C and model arguments
 parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                     help='learning rate (default: 0.001)')
-parser.add_argument('--num-iters', type=int, default=1e6, metavar='NS',
-                    help='number of training iterations per training thread (default: 1e6)')
+parser.add_argument('--max-step', type=int, default=20, metavar='NS',
+                    help='number of training iterations per training thread (default: 20)')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
                     help='discount factor for rewards (default: 0.99)')
-parser.add_argument('--tau', type=float, default=1.0, metavar='T',
-                    help='parameter for GAE (default: 1.00)')
+parser.add_argument('--beta', type=float, default=0.1, metavar='BT',
+                    help='parameter for entropy (default: 0.1)')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
-parser.add_argument('--num-steps', type=int, default=20, metavar='NS',
-                    help='number of forward steps in A3C (default: 20)')
 parser.add_argument('--hist-size', type=int, default=5,
                     help='action history size (default: 5)')
-parser.add_argument('--log', type=str, default="./log/",
-                    help='path to save graph')
 
 
 if __name__ == '__main__':
@@ -55,7 +53,7 @@ if __name__ == '__main__':
     with tf.device("/cpu:0"):
         OPT = tf.train.RMSPropOptimizer(args.lr, name='RMSPropA')
         # OPT_C = tf.train.RMSPropOptimizer(args.lr, name='RMSPropC')
-        GLOBAL_AC = inference.ACNet('global')  # we only need its params
+        GLOBAL_AC = inference.ACNet('global', args)  # we only need its params
         COORD = tf.train.Coordinator()
 
         workers = []

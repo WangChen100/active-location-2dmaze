@@ -16,14 +16,7 @@ from maze2d import *
 A_BOUND = math.pi
 NUM_ORIENTATION = 4
 NUM_ACTION = 3
-
-NUM_HISTORY = 8
-ENTROPY_BETA = 0.01
-GLOBAL_EP = 0
-MAX_GLOBAL_EP = 1000
-MAX_EP_STEP = 20
 UPDATE_GLOBAL_ITER = 3
-GAMMA = 0.9
 
 
 class ACNet(object):
@@ -63,7 +56,7 @@ class ACNet(object):
                         axis=1, keep_dims=True, name='log_prob')
                     exp_v = log_prob * tf.stop_gradient(td)
                     entropy = -(log_prob * self.prob).sum(1)
-                    self.exp_v = exp_v + ENTROPY_BETA * entropy
+                    self.exp_v = exp_v + self.args.beta * entropy
                     self.a_loss = tf.reduce_mean(-self.exp_v)
 
                 with tf.name_scope('local_grad'):
@@ -132,14 +125,14 @@ class Worker(object):
         buffer_belief, buffer_a, buffer_r, buffer_depth = [], [], [], []
 
         # train local agent in following loop
-        while not self.coord.should_stop() and local_ep < MAX_GLOBAL_EP:
+        while not self.coord.should_stop() and local_ep < self.args.max_ep:
             belief, depth = env.reset()
             ep_r = 0
-            for ep_t in range(MAX_EP_STEP):
+            for ep_t in range(self.args.max_step):
 
                 a = self.AC.choose_action(belief)
                 belief_, r, done, depth = env.step(a)
-                done = True if ep_t == MAX_EP_STEP - 1 else False
+                done = True if ep_t == self.args.max_step - 1 else False
 
                 ep_r += r
                 buffer_belief.append(belief)
@@ -154,7 +147,7 @@ class Worker(object):
                         v_s_ = self.SESS.run(self.AC.v_target, {self.AC.belief: belief_[np.newaxis, :]})[0, 0]
                     buffer_v_target = []
                     for r in buffer_r[::-1]:  # reverse buffer r
-                        v_s_ = r + GAMMA * v_s_
+                        v_s_ = r + self.args.gamma * v_s_
                         buffer_v_target.append(v_s_)
                     buffer_v_target.reverse()
                     # buffer_s, buffer_a, buffer_v_target = np.vstack(buffer_s), np.vstack(buffer_a), np.vstack(
