@@ -5,28 +5,28 @@ from utils.localization import *
 
 
 class Maze2D(object):
-    '''
+    """
     Include __init__(), reset() and step()
-    '''
+    """
     def __init__(self, args):
         self.args = args
-        self.test_mazes = np.load(args.test_data)
-        self.test_maze_idx = 0
-        return
+        if self.args.train:
+            train_path = './test_data/m'+str(self.args.map_size)+'_n1000.npy'
+            assert os.path.exists(train_path), "training maze do not exit"
+            self.test_mazes = np.load(train_path)
 
     def reset(self):
-        '''
-        Return state, belief map plus map design, and depth which agent is seeing
-        '''
+        """
+        reinitialize maze
+        :return: state, belief (belief map adding map design), and depth which agent is seeing
+        """
         # Load a test maze during evaluation
-        if self.args.evaluate != 0:
-            maze_in_test_data = False
-            maze = self.test_mazes[self.test_maze_idx]
+        maze_in_test_data = False
+        if self.args.train:
+            maze = self.test_mazes[np.random.randint(1000)]
             self.orientation = int(maze[-1])
             self.position = (int(maze[-3]), int(maze[-2]))
-            self.map_design = maze[:-3].reshape(self.args.map_size,
-                                                self.args.map_size)
-            self.test_maze_idx += 1
+            self.map_design = maze[:-3].reshape(self.args.map_size, self.args.map_size)
         else:
             maze_in_test_data = True
 
@@ -46,71 +46,73 @@ class Maze2D(object):
             # Make sure the maze doesn't exist in the test mazes
             if not any((maze == x).all() for x in self.test_mazes):
                 # Make sure map is not symmetric
-                if not (self.map_design ==
-                        np.rot90(self.map_design)).all() \
-                    and not (self.map_design ==
-                             np.rot90(np.rot90(self.map_design))).all():
+                if not (self.map_design == np.rot90(self.map_design)).all() \
+                        and not (self.map_design == np.rot90(np.rot90(self.map_design))).all():
                     maze_in_test_data = False
+
+        # -------- maze, position and orientation finished -----------------
 
         # Pre-compute likelihoods of all observations on the map for efficiency
         self.likelihoods = get_all_likelihoods(self.map_design)
 
         # Get current observation and likelihood matrix
-        curr_depth = get_depth(self.map_design, self.position,
-                               self.orientation)
-        curr_likelihood = self.likelihoods[int(curr_depth) - 1] # curr_likelihood indicates all locations with same curr_depth
+        self.curr_depth = get_depth(self.map_design, self.position, self.orientation)
+        # curr_likelihood indicates all locations with same curr_depth
+        curr_likelihood = self.likelihoods[int(self.curr_depth) - 1]
 
         # Posterior is just the likelihood as prior is uniform
-        self.posterior = curr_likelihood # shape=[num_orientation, map_size, map_size]
+        self.belief_map = curr_likelihood  # shape=[num_orientation, map_size, map_size]
 
         # Renormalization of the posterior
-        self.posterior /= np.sum(self.posterior)
+        self.belief_map /= np.sum(self.belief_map)
         self.t = 0
 
         # next state for the policy model
-        self.state = np.concatenate((self.posterior, np.expand_dims(
+        self.belief = np.concatenate((self.belief_map, np.expand_dims(
                                      self.map_design, axis=0)), axis=0)  # shape=[num_orientation+1, map_size, map_size]
-        return self.state, int(curr_depth)
-
+        return self.belief, int(self.curr_depth)
 
     def step(self, action_id):
-        # Get the observation before taking the action
-        curr_depth = get_depth(self.map_design, self.position,
-                               self.orientation)
+        """
+        belief map update according to action
+        :param action_id: 0:turn right; 1:turn left; 2: go forward
+        :return: belief, reward, done, depth
+        """
+        # # Get the observation before taking the action
+        # curr_depth = get_depth(self.map_design, self.position, self.orientation)
 
         # Posterior from last step is the prior for this step
-        prior = self.posterior
+        prior = self.belief_map
 
         # Transform the prior according to the action taken
-        prior = transition_function(prior, curr_depth, action_id)
+        prior = transition_function(prior, self.curr_depth, action_id)
 
         # Calculate position and orientation after taking the action
         self.position, self.orientation = get_next_state(
             self.map_design, self.position, self.orientation, action_id)
 
         # Get the observation and likelihood after taking the action
-        curr_depth = get_depth(
-            self.map_design, self.position, self.orientation)
-        curr_likelihood = self.likelihoods[int(curr_depth) - 1]
+        self.curr_depth = get_depth(self.map_design, self.position, self.orientation)
+        curr_likelihood = self.likelihoods[int(self.curr_depth) - 1]
 
         # Posterior = Prior * Likelihood
-        self.posterior = np.multiply(curr_likelihood, prior)
+        self.belief_map = np.multiply(curr_likelihood, prior)
 
         # Renormalization of the posterior
-        self.posterior /= np.sum(self.posterior)
+        self.belief_map /= np.sum(self.belief_map)
 
         # Calculate the reward
-        reward = self.posterior.max()
+        reward = self.belief_map.max()
 
         self.t += 1
         if self.t == self.args.max_episode_length:
-            is_final = True
+            is_terminal = True
         else:
-            is_final = False
+            is_terminal = False
 
         # next state for the policy model
-        self.state = np.concatenate(
-            (self.posterior, np.expand_dims(
+        self.belief = np.concatenate(
+            (self.belief_map, np.expand_dims(
                 self.map_design, axis=0)), axis=0)
 
-        return self.state, reward, is_final, int(curr_depth)
+        return self.belief, reward, is_terminal, int(self.curr_depth)

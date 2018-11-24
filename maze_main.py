@@ -18,12 +18,14 @@ import inference
 
 parser = argparse.ArgumentParser(description='Active Neural Localization')
 
+parser.add_argument('--train', type=bool, default=False,
+                    help='True(default): Train; False: Test on testing data')
+
 # Environment arguments
-parser.add_argument('-l', '--max-episode-length', type=int,
-                    default=30, metavar='L',
+parser.add_argument('-l', '--max-episode-length', type=int, default=30, metavar='L',
                     help='maximum length of an episode (default: 30)')
 parser.add_argument('-m', '--map-size', type=int, default=7,
-                    help='m: Size of maze m x m (default: 7), must be an odd natural number')
+                    help='m(default: 7): Size of maze must be an odd natural number')
 
 # A3C and model arguments
 parser.add_argument('--lr', type=float, default=0.001, metavar='LR',

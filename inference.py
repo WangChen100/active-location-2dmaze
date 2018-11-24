@@ -14,10 +14,9 @@ import tensorflow.contrib.slim as slim
 from maze2d import *
 
 A_BOUND = math.pi
-MAZE_HEIGHT = 7
-MAZE_WIDTH = 7
 NUM_ORIENTATION = 4
 NUM_ACTION = 3
+
 NUM_HISTORY = 8
 ENTROPY_BETA = 0.01
 GLOBAL_EP = 0
@@ -28,17 +27,20 @@ GAMMA = 0.9
 
 
 class ACNet(object):
-    '''
+    """
     This class defines actor-critic model
-    '''
-    def __init__(self, scope, global_config=None):
-        '''
+    """
+    def __init__(self, scope, args, global_config=None):
+        """
         To build graph
         :param scope:
         :param global_config:
-        '''
+        """
+        self.args = args
         with tf.variable_scope(scope):
-            self.belief = tf.placeholder(tf.float32, [None, MAZE_HEIGHT, MAZE_WIDTH, NUM_ORIENTATION+1], 'belief')
+            self.belief = tf.placeholder(dtype=tf.float32,
+                                         shape=[None, self.args.map_size, self.args.map_size, NUM_ORIENTATION+1],
+                                         name='belief')
             # self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY*NUM_ACTION], 'action_history')
             # self.dh = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'depth_history')
             # self.th = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'time_history')
@@ -48,7 +50,7 @@ class ACNet(object):
             if scope != 'global':  # local net, calculate losses
                 globalAC, self.OPT, self.SESS, _ = global_config
                 self.a_his = tf.placeholder(tf.float32, [None, NUM_ACTION], 'actions')
-                self.v_target = tf.placeholder(tf.float32, [None, 1], 'Vtarget')
+                self.v_target = tf.placeholder(tf.float32, [None, 1], 'V_target')
 
                 td = tf.subtract(self.v_target, self.val, name='TD_error')
 
@@ -77,11 +79,11 @@ class ACNet(object):
                         self.update_c_op = self.OPT.apply_gradients(zip(self.c_grads, globalAC.c_params))
 
     def _network(self, scope):
-        '''
+        """
         To inference forward
         :param scope: global or local agent number
         :return: action_probability, state_value, actor_parameters, critic_parameters
-        '''
+        """
         conv1 = slim.convolution2d(self.belief, 16, tf.nn.relu, 7, 3, 'same', scope=scope+'/conv_layer1')
         conv2 = slim.convolution2d(conv1, 16, tf.nn.relu, 3, 1, 'same', scope=scope + '/conv_layer2')
         fc = slim.fully_connected(slim.flatten(conv2), 256, scope=scope + '/conv_fc')  #
@@ -110,19 +112,19 @@ class ACNet(object):
 
 
 class Worker(object):
-    '''
+    """
     This class defines local agents
-    '''
+    """
     def __init__(self, name, args, global_config):
         self.name = name
         self.args = args
         self.SESS, self.coord = global_config[-1:]
-        self.AC = ACNet(name, global_config)
+        self.AC = ACNet(name, args, global_config)
 
     def work(self):
-        '''
+        """
         To train local agents, update global parameters and pull into local parameters
-        '''
+        """
         env = Maze2D(self.args)
 
         local_ep = 0
