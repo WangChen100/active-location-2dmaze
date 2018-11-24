@@ -32,8 +32,10 @@ class ACNet(object):
         self.args = args
         with tf.variable_scope(scope):
             self.belief = tf.placeholder(dtype=tf.float32,
-                                         shape=[None, self.args.map_size, self.args.map_size, NUM_ORIENTATION+1],
+                                         shape=[None, NUM_ORIENTATION+1, self.args.map_size, self.args.map_size],
                                          name='belief')
+            # shape: [batch,channels,height,width] ==> [batch,height,width,channels]
+            self.belief = tf.transpose(self.belief, [0, 2, 3, 1])
             # self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY*NUM_ACTION], 'action_history')
             # self.dh = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'depth_history')
             # self.th = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'time_history')
@@ -101,7 +103,7 @@ class ACNet(object):
 
     def choose_action(self, s):  # run by a local
         prob_weights = self.SESS.run(self.prob, feed_dict={self.belief: s[np.newaxis, :]})
-        return np.random.choice(NUM_ACTION, p=prob_weights.ravel())  # output_dims?
+        return np.random.choice(NUM_ACTION, size=1, replace=False, p=prob_weights.ravel())[0]  # output_dims?
 
 
 class Worker(object):
@@ -144,7 +146,7 @@ class Worker(object):
                     if done:
                         v_s_ = 0  # terminal
                     else:
-                        v_s_ = self.SESS.run(self.AC.v_target, {self.AC.belief: belief_[np.newaxis, :]})[0, 0]
+                        v_s_ = self.SESS.run(self.AC.v_target, {self.AC.belief: belief_[np.newaxis, :]})
                     buffer_v_target = []
                     for r in buffer_r[::-1]:  # reverse buffer r
                         v_s_ = r + self.args.gamma * v_s_
