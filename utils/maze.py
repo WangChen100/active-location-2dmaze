@@ -63,7 +63,7 @@ def get_depth(map_design, position, orientation):
     while(compare_tuples(new_tuple, tuple([m - 1, n - 1])) and
             compare_tuples(tuple([0, 0]), new_tuple)):
         if map_design[new_tuple] != 0:
-            # when map_design[new_tuple] is a wall, return depth
+            # when map_design[new_tuple]=1 is a wall, return depth
             break
         else:
             # recurrently calculate depth

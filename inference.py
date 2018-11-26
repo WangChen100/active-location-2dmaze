@@ -9,6 +9,7 @@
 '''
 import math
 import numpy as np
+import matplotlib.pyplot as plt
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from maze2d import *
@@ -63,13 +64,13 @@ class ACNet(object):
                     self.a_grads = tf.gradients(self.a_loss, self.a_params)
                     self.c_grads = tf.gradients(self.c_loss, self.c_params)
 
-                with tf.name_scope('sync'):
-                    with tf.name_scope('pull'):
-                        self.pull_a_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.a_params, globalAC.a_params)]
-                        self.pull_c_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.c_params, globalAC.c_params)]
-                    with tf.name_scope('push'):
-                        self.update_a_op = self.OPT.apply_gradients(zip(self.a_grads, globalAC.a_params))
-                        self.update_c_op = self.OPT.apply_gradients(zip(self.c_grads, globalAC.c_params))
+            with tf.name_scope('sync'):
+                with tf.name_scope('pull'):
+                    self.pull_a_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.a_params, globalAC.a_params)]
+                    self.pull_c_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.c_params, globalAC.c_params)]
+                with tf.name_scope('push'):
+                    self.update_a_op = self.OPT.apply_gradients(zip(self.a_grads, globalAC.a_params))
+                    self.update_c_op = self.OPT.apply_gradients(zip(self.c_grads, globalAC.c_params))
 
     def _network(self, scope):
         """
@@ -147,7 +148,7 @@ class Worker(object):
                     else:
                         v_s_ = self.SESS.run(self.AC.val, {self.AC.belief_original: belief_[np.newaxis, :]})
                     buffer_v_target = []
-                    for r in buffer_r[::-1]:  # reverse buffer r
+                    for r in buffer_r[::-1]:  # reverse buffer_r
                         v_s_ = r + self.args.gamma * v_s_
                         buffer_v_target.append(v_s_)
                     buffer_v_target.reverse()
@@ -177,3 +178,24 @@ class Worker(object):
                     # )
                     local_ep += 1
                     break
+
+    def show_loc(self, belief):
+        plt.ion()
+
+        plt.subplot(3, 2, 1)
+        plt.imshow(belief[0])
+
+        plt.subplot(3, 2, 2)
+        plt.imshow(belief[1])
+
+        plt.subplot(3, 2, 3)
+        plt.imshow(belief[2])
+
+        plt.subplot(3, 2, 4)
+        plt.imshow(belief[3])
+
+        plt.subplot(3, 1, 2)
+        plt.imshow(belief[4])
+
+        plt.pause(0.033)
+        plt.show()

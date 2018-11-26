@@ -53,7 +53,7 @@ class Maze2D(object):
         # -------- maze, position and orientation finished -----------------
 
         # Pre-compute likelihoods of all observations on the map for efficiency
-        self.likelihoods = get_all_likelihoods(self.map_design)
+        self.likelihoods = get_all_likelihoods(self.map_design)  # element = 1 indicates possible location, or not
 
         # Get current observation and likelihood matrix
         self.curr_depth = get_depth(self.map_design, self.position, self.orientation)

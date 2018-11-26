@@ -1,3 +1,7 @@
 log/
 saved/
 .idea/
+utils/
+!utils/maze.py
+!utils/localization.py
+!utils/__init__.py

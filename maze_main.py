@@ -13,6 +13,7 @@ import argparse
 import tensorflow as tf
 import multiprocessing as mp
 import threading
+import matplotlib.pyplot as plt
 import inference
 
 
@@ -20,13 +21,13 @@ parser = argparse.ArgumentParser(description='Active Neural Localization')
 
 parser.add_argument('--train', type=bool, default=True,
                     help='True(default): Train; False: Test on testing data')
-parser.add_argument('--log', type=str, default="./log/",
+parser.add_argument('--log', type=str, default="logs/",
                     help='path to save graph')
 
 # Environment arguments
 parser.add_argument('-l', '--max-ep', type=int, default=30, metavar='L',
                     help='maximum length of an episode (default: 30)')
-parser.add_argument('-m', '--map-size', type=int, default=7,
+parser.add_argument('-m', '--map-size', type=int, default=21,
                     help='m(default: 7): Size of maze must be an odd natural number')
 
 # A3C and model arguments
@@ -45,6 +46,7 @@ parser.add_argument('--hist-size', type=int, default=5,
 
 
 if __name__ == '__main__':
+
     args = parser.parse_args()
     N_WORKERS = mp.cpu_count()
 
@@ -64,10 +66,9 @@ if __name__ == '__main__':
 
     SESS.run(tf.global_variables_initializer())
 
-    if args.log == 'No':
-        if os.path.exists(args.log):
-            shutil.rmtree(args.log)
-        tf.summary.FileWriter(args.log, SESS.graph)
+    if os.path.exists(args.log):
+        shutil.rmtree(args.log)
+    tf.summary.FileWriter(args.log, SESS.graph)
 
     worker_threads = []
     for worker in workers:
