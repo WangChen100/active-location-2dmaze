@@ -18,7 +18,7 @@ import inference
 
 parser = argparse.ArgumentParser(description='Active Neural Localization')
 
-parser.add_argument('--train', type=bool, default=False,
+parser.add_argument('--train', type=bool, default=True,
                     help='True(default): Train; False: Test on testing data')
 parser.add_argument('--log', type=str, default="./log/",
                     help='path to save graph')
@@ -53,14 +53,14 @@ if __name__ == '__main__':
     with tf.device("/cpu:0"):
         OPT = tf.train.RMSPropOptimizer(args.lr, name='RMSPropA')
         # OPT_C = tf.train.RMSPropOptimizer(args.lr, name='RMSPropC')
-        GLOBAL_AC = inference.ACNet('global', args)  # we only need its params
+        GLOBAL_AC = inference.ACNet('global', args)
         COORD = tf.train.Coordinator()
 
         workers = []
         # Create worker
         for i in range(N_WORKERS):
             i_name = 'W_%i' % i   # worker name
-            workers.append(inference.Worker(i_name, (GLOBAL_AC, OPT, SESS, COORD)))
+            workers.append(inference.Worker(i_name, args, (GLOBAL_AC, OPT, SESS, COORD)))
 
     SESS.run(tf.global_variables_initializer())
 

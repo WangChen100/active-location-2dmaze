@@ -31,11 +31,11 @@ class ACNet(object):
         """
         self.args = args
         with tf.variable_scope(scope):
-            self.belief = tf.placeholder(dtype=tf.float32,
-                                         shape=[None, NUM_ORIENTATION+1, self.args.map_size, self.args.map_size],
-                                         name='belief')
+            self.belief_original = tf.placeholder(dtype=tf.float32,
+                                                  shape=[None, NUM_ORIENTATION+1, self.args.map_size, self.args.map_size],
+                                                  name='original_belief_data')
             # shape: [batch,channels,height,width] ==> [batch,height,width,channels]
-            self.belief = tf.transpose(self.belief, [0, 2, 3, 1])
+            self.belief = tf.transpose(self.belief_original, [0, 2, 3, 1], name='transpose_belief')
             # self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY*NUM_ACTION], 'action_history')
             # self.dh = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'depth_history')
             # self.th = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'time_history')
@@ -44,7 +44,7 @@ class ACNet(object):
 
             if scope != 'global':  # local net, calculate losses
                 globalAC, self.OPT, self.SESS, _ = global_config
-                self.a_his = tf.placeholder(tf.float32, [None, NUM_ACTION], 'actions')
+                self.a_his = tf.placeholder(tf.uint8, [None, 1], 'actions')
                 self.v_target = tf.placeholder(tf.float32, [None, 1], 'V_target')
 
                 td = tf.subtract(self.v_target, self.val, name='TD_error')
@@ -53,14 +53,12 @@ class ACNet(object):
                     self.c_loss = tf.reduce_mean(tf.square(td))
 
                 with tf.name_scope('actor_loss'):
-                    log_prob = tf.reduce_sum(
-                        tf.log(self.prob)*tf.one_hot(self.a_his, NUM_ACTION, dtype=tf.float32),
-                        axis=1, keep_dims=True, name='log_prob')
+                    log_prob = tf.log(self.prob)*tf.one_hot(self.a_his, NUM_ACTION, dtype=tf.float32)
                     exp_v = log_prob * tf.stop_gradient(td)
-                    entropy = -(log_prob * self.prob).sum(1)
+                    entropy = -(log_prob * self.prob)
                     self.exp_v = exp_v + self.args.beta * entropy
                     self.a_loss = tf.reduce_mean(-self.exp_v)
-
+                    # tf.reduce_sum(log_prob, axis=1, keep_dims=True, name='log_prob')
                 with tf.name_scope('local_grad'):
                     self.a_grads = tf.gradients(self.a_loss, self.a_params)
                     self.c_grads = tf.gradients(self.c_loss, self.c_params)
@@ -79,9 +77,10 @@ class ACNet(object):
         :param scope: global or local agent number
         :return: action_probability, state_value, actor_parameters, critic_parameters
         """
-        conv1 = slim.convolution2d(self.belief, 16, tf.nn.relu, 7, 3, 'same', scope=scope+'/conv_layer1')
-        conv2 = slim.convolution2d(conv1, 16, tf.nn.relu, 3, 1, 'same', scope=scope + '/conv_layer2')
-        fc = slim.fully_connected(slim.flatten(conv2), 256, scope=scope + '/conv_fc')  #
+        conv = slim.repeat(self.belief, 2, slim.conv2d, 16, [3,3], scope=scope+'conv')
+        # conv1 = tf.nn.conv2d(self.belief, [3, 3, 5, 16], strides=[1, 2, 2,1], padding='SAME', name='conv_layer1')
+        # conv2 = tf.nn.conv2d(conv1, [3, 3, 16, 16], strides=[1, 2, 2, 1], padding='SAME', name='conv_layer2')
+        fc = tf.contrib.layers.fully_connected(tf.layers.flatten(conv), 256, scope=scope+'/conv_fc')
         # fc_new = tf.concat(1, [fc, self.ah, self.dh, self.th])
 
         w_init = tf.random_normal_initializer(0., .1)
@@ -102,7 +101,7 @@ class ACNet(object):
         self.SESS.run([self.pull_a_params_op, self.pull_c_params_op])
 
     def choose_action(self, s):  # run by a local
-        prob_weights = self.SESS.run(self.prob, feed_dict={self.belief: s[np.newaxis, :]})
+        prob_weights = self.SESS.run(self.prob, feed_dict={self.belief_original: s[np.newaxis, :]})
         return np.random.choice(NUM_ACTION, size=1, replace=False, p=prob_weights.ravel())[0]  # output_dims?
 
 
@@ -113,7 +112,7 @@ class Worker(object):
     def __init__(self, name, args, global_config):
         self.name = name
         self.args = args
-        self.SESS, self.coord = global_config[-1:]
+        self.SESS, self.coord = global_config[-2:]
         self.AC = ACNet(name, args, global_config)
 
     def work(self):
@@ -146,23 +145,22 @@ class Worker(object):
                     if done:
                         v_s_ = 0  # terminal
                     else:
-                        v_s_ = self.SESS.run(self.AC.v_target, {self.AC.belief: belief_[np.newaxis, :]})
+                        v_s_ = self.SESS.run(self.AC.val, {self.AC.belief_original: belief_[np.newaxis, :]})
                     buffer_v_target = []
                     for r in buffer_r[::-1]:  # reverse buffer r
                         v_s_ = r + self.args.gamma * v_s_
                         buffer_v_target.append(v_s_)
                     buffer_v_target.reverse()
-                    # buffer_s, buffer_a, buffer_v_target = np.vstack(buffer_s), np.vstack(buffer_a), np.vstack(
-                    #     buffer_v_target)
+                    # buffer_belief, buffer_a, buffer_v_target = np.array(buffer_belief), np.array(buffer_a)[:, np.newaxis], np.array(buffer_v_target)
                     feed_dict = {
-                        self.AC.belief: buffer_belief,
-                        self.AC.a_his: buffer_a,
-                        self.AC.v_target: buffer_v_target,
+                        self.AC.belief_original: np.array(buffer_belief),
+                        self.AC.a_his: np.vstack(buffer_a),
+                        self.AC.v_target: np.vstack(buffer_v_target),
                         # self.AC.: buffer_depth
                     }
 
                     self.AC.update_global(feed_dict)
-                    buffer_s, buffer_a, buffer_r = [], [], []
+                    buffer_belief, buffer_a, buffer_r = [], [], []
                     self.AC.pull_global()
 
                 belief = belief_

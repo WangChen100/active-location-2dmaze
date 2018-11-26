@@ -11,8 +11,8 @@ class Maze2D(object):
     def __init__(self, args):
         self.args = args
         if self.args.train:
-            train_path = './test_data/m'+str(self.args.map_size)+'_n1000.npy'
-            assert os.path.exists(train_path), "training maze do not exit"
+            train_path = './testing_mazes/m'+str(self.args.map_size)+'_n1000.npy'
+            assert os.path.exists(train_path), "training mazes do not exit"
             self.test_mazes = np.load(train_path)
 
     def reset(self):
@@ -105,7 +105,7 @@ class Maze2D(object):
         reward = self.belief_map.max()
 
         self.t += 1
-        if self.t == self.args.max_episode_length:
+        if self.t == self.args.max_ep:
             is_terminal = True
         else:
             is_terminal = False
