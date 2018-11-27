@@ -31,20 +31,29 @@ class ACNet(object):
         :param global_config:
         """
         self.args = args
-        with tf.variable_scope(scope):
-            self.belief_original = tf.placeholder(dtype=tf.float32,
-                                                  shape=[None, NUM_ORIENTATION+1, self.args.map_size, self.args.map_size],
-                                                  name='original_belief_data')
-            # shape: [batch,channels,height,width] ==> [batch,height,width,channels]
-            self.belief = tf.transpose(self.belief_original, [0, 2, 3, 1], name='transpose_belief')
-            # self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY*NUM_ACTION], 'action_history')
-            # self.dh = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'depth_history')
-            # self.th = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'time_history')
+        if scope == 'global':
+            with tf.variable_scope(scope):
+                self.belief_original = tf.placeholder(dtype=tf.float32,
+                                                      shape=[None, NUM_ORIENTATION + 1, self.args.map_size,
+                                                             self.args.map_size],
+                                                      name='original_belief_data')
+                self.share_params, self.a_params, self.c_params, = self._network()[-3:]
+        else:
+            with tf.variable_scope(scope):
+                self.belief_original = tf.placeholder(dtype=tf.float32,
+                                                      shape=[None, NUM_ORIENTATION+1, self.args.map_size,
+                                                             self.args.map_size],
+                                                      name='original_belief_data')
+                # shape: [batch,channels,height,width] ==> [batch,height,width,channels]
+                self.belief = tf.transpose(self.belief_original, [0, 2, 3, 1], name='transpose_belief')
+                # self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY*NUM_ACTION], 'action_history')
+                # self.dh = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'depth_history')
+                # self.th = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'time_history')
 
-            self.prob, self.val, self.a_params, self.c_params = self._network(scope)
+                self.prob, self.val, self.share_params, self.a_params, self.c_params = self._network()
 
-            if scope != 'global':  # local net, calculate losses
-                globalAC, self.OPT, self.SESS, _ = global_config
+                glo, self.OPT, self.SESS, _ = global_config
+
                 self.a_his = tf.placeholder(tf.uint8, [None, 1], 'actions')
                 self.v_target = tf.placeholder(tf.float32, [None, 1], 'V_target')
 
@@ -59,41 +68,50 @@ class ACNet(object):
                     entropy = -(log_prob * self.prob)
                     self.exp_v = exp_v + self.args.beta * entropy
                     self.a_loss = tf.reduce_mean(-self.exp_v)
-                    # tf.reduce_sum(log_prob, axis=1, keep_dims=True, name='log_prob')
+
+                self.sha_loss = self.a_loss+self.c_loss
+
                 with tf.name_scope('local_grad'):
                     self.a_grads = tf.gradients(self.a_loss, self.a_params)
                     self.c_grads = tf.gradients(self.c_loss, self.c_params)
+                    self.sha_grads = tf.gradients(self.sha_loss, self.share_params)
 
             with tf.name_scope('sync'):
                 with tf.name_scope('pull'):
-                    self.pull_a_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.a_params, globalAC.a_params)]
-                    self.pull_c_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.c_params, globalAC.c_params)]
+                    self.pull_sha_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.share_params, glo.share_params)]
+                    self.pull_a_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.a_params, glo.a_params)]
+                    self.pull_c_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.c_params, glo.c_params)]
                 with tf.name_scope('push'):
-                    self.update_a_op = self.OPT.apply_gradients(zip(self.a_grads, globalAC.a_params))
-                    self.update_c_op = self.OPT.apply_gradients(zip(self.c_grads, globalAC.c_params))
+                    self.update_sha_op = self.OPT.apply_gradients(zip(self.sha_grads, glo.share_params))
+                    self.update_a_op = self.OPT.apply_gradients(zip(self.a_grads, glo.a_params))
+                    self.update_c_op = self.OPT.apply_gradients(zip(self.c_grads, glo.c_params))
 
-    def _network(self, scope):
+    def _network(self):
         """
         To inference forward
         :param scope: global or local agent number
         :return: action_probability, state_value, actor_parameters, critic_parameters
         """
-        conv = slim.repeat(self.belief, 2, slim.conv2d, 16, [3,3], scope=scope+'conv')
-        # conv1 = tf.nn.conv2d(self.belief, [3, 3, 5, 16], strides=[1, 2, 2,1], padding='SAME', name='conv_layer1')
-        # conv2 = tf.nn.conv2d(conv1, [3, 3, 16, 16], strides=[1, 2, 2, 1], padding='SAME', name='conv_layer2')
-        fc = tf.contrib.layers.fully_connected(tf.layers.flatten(conv), 256, scope=scope+'/conv_fc')
-        # fc_new = tf.concat(1, [fc, self.ah, self.dh, self.th])
+        init = tf.random_normal_initializer(0., .1)
+        with tf.variable_scope('features'):
+            conv = slim.repeat(self.belief_original, 2, slim.conv2d, 16, [3, 3], scope='conv')
+            # conv1 = tf.nn.conv2d(self.belief, [3, 3, 5, 16], strides=[1, 2, 2,1], padding='SAME', name='conv_layer1')
+            # conv2 = tf.nn.conv2d(conv1, [3, 3, 16, 16], strides=[1, 2, 2, 1], padding='SAME', name='conv_layer2')
+            fc = tf.contrib.layers.fully_connected(tf.layers.flatten(conv), 256, scope='fc')
+            # fc_new = tf.concat(1, [fc, self.ah, self.dh, self.th])
 
-        w_init = tf.random_normal_initializer(0., .1)
         with tf.variable_scope('actor'):
-            l_a = tf.layers.dense(fc, NUM_ACTION, tf.nn.softmax, kernel_initializer=w_init, name='actions')
+            l_a = tf.layers.dense(fc, NUM_ACTION, activation=tf.nn.softmax,
+                                  kernel_initializer=init, name='fc')
         with tf.variable_scope('critic'):
-            l_c = tf.layers.dense(fc, 1, kernel_initializer=w_init, name='v')  # state value
+            l_c = tf.layers.dense(fc, 1, activation=None,
+                                  kernel_initializer=init, name='fc')  # state value
 
-        a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/actor')
-        c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/critic')
+        share_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='features')
+        a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='actor')
+        c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='critic')
 
-        return l_a, l_c, a_params, c_params
+        return l_a, l_c, share_params, a_params, c_params
 
     def update_global(self, feed_dict):  # run by a local
         self.SESS.run([self.update_a_op, self.update_c_op], feed_dict)  # local grads applies to global net
