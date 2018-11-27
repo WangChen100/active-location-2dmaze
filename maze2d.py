@@ -103,6 +103,7 @@ class Maze2D(object):
 
         # Calculate the reward
         reward = self.belief_map.max()
+        loc = np.where(self.belief_map == reward)
 
         self.t += 1
         if self.t == self.args.max_ep:
@@ -115,4 +116,5 @@ class Maze2D(object):
             (self.belief_map, np.expand_dims(
                 self.map_design, axis=0)), axis=0)
 
-        return self.belief, reward, is_terminal, int(self.curr_depth)
+        return self.belief, reward, is_terminal, int(self.curr_depth), loc, self.position
+

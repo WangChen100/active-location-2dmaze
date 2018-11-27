@@ -47,9 +47,6 @@ class ACNet(object):
                                                       name='original_belief_data')
                 # shape: [batch,channels,height,width] ==> [batch,height,width,channels]
                 self.belief = tf.transpose(self.belief_original, [0, 2, 3, 1], name='transpose_belief')
-                # self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY*NUM_ACTION], 'action_history')
-                # self.dh = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'depth_history')
-                # self.th = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'time_history')
 
                 self.prob, self.val = self._network()
 
@@ -114,7 +111,12 @@ class ACNet(object):
 
     def choose_action(self, s):  # run by a local
         prob_weights = self.sess.run(self.prob, feed_dict={self.belief_original: s[np.newaxis, :]})
-        return np.random.choice(NUM_ACTION, replace=False, p=prob_weights.ravel())  # output_dims?
+        try:
+            action_id = np.random.choice(NUM_ACTION, replace=False, p=prob_weights.ravel())  # output_dims?
+        except ValueError:
+            print("Error: prob_weights.ravel()")
+            assert True, "Error!!"
+        return action_id
 
 
 class Worker(object):
@@ -134,7 +136,7 @@ class Worker(object):
         """
         env = Maze2D(self.args)
 
-        local_ep = 0
+        local_ep = 1
         local_step = 1
         buffer_belief, buffer_a, buffer_r, buffer_depth = [], [], [], []
 
@@ -142,10 +144,16 @@ class Worker(object):
         while not self.coord.should_stop() and local_ep < self.args.max_ep:
             belief, depth = env.reset()
             ep_r = 0
+            accuracy = 0
+            print(
+                self.name,
+                "Ep:", local_ep,
+                "| Ep_accuracy: %f" % (accuracy/local_ep),
+            )
             for ep_t in range(self.args.max_step):
 
                 a = self.AC.choose_action(belief)
-                belief_, r, done, depth = env.step(a)
+                belief_, r, done, depth, loc, label = env.step(a)
                 done = True if ep_t == self.args.max_step - 1 else False
 
                 ep_r += r
@@ -188,6 +196,9 @@ class Worker(object):
                     #     "Ep:", GLOBAL_EP,
                     #     "| Ep_r: %i" % GLOBAL_RUNNING_R[-1],
                     # )
+                    if len(loc) == 1:
+                        if self.distances(loc[0], label) < 5:
+                            accuracy += 1
                     local_ep += 1
                     break
 
@@ -211,3 +222,12 @@ class Worker(object):
 
         plt.pause(0.033)
         plt.show()
+
+    def distances(self, p1, p2):
+        """
+        calculate distance between p1 and p2
+        :param p1:
+        :param p2:
+        :return:
+        """
+        return np.sum((p1-p2)*(p1-p2))

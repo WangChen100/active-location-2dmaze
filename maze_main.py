@@ -32,7 +32,7 @@ parser.add_argument('-m', '--map-size', type=int, default=21,
 # A3C and model arguments
 parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                     help='learning rate (default: 0.001)')
-parser.add_argument('--max-step', type=int, default=30, metavar='NS',
+parser.add_argument('--max-step', type=int, default=100, metavar='NS',
                     help='number of training iterations per training thread (default: 30)')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
                     help='discount factor for rewards (default: 0.99)')
