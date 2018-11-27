@@ -24,13 +24,14 @@ class ACNet(object):
     """
     This class defines actor-critic model
     """
-    def __init__(self, scope, args, global_config=None):
+    def __init__(self, scope, args):
         """
         To build graph
         :param scope:
-        :param global_config:
+        :param args:
         """
         self.args = args
+        self.sess = tf.get_default_session()
         if scope == 'global':
             with tf.variable_scope(scope):
                 self.belief_original = tf.placeholder(dtype=tf.float32,
@@ -52,8 +53,6 @@ class ACNet(object):
 
                 self.prob, self.val = self._network()
 
-                self.OPT, self.SESS, _ = global_config
-
                 self.a_his = tf.placeholder(tf.uint8, [None, 1], 'actions')
                 self.v_target = tf.placeholder(tf.float32, [None, 1], 'V_target')
 
@@ -74,22 +73,15 @@ class ACNet(object):
                     self.gradients = tf.gradients(self.loss, self.local_vars)
                     self.var_norms = tf.global_norm(self.local_vars)
                     # self.grads, self.grad_norms = tf.clip_by_global_norm(self.gradients, 40.0)
-                    # self.a_grads = tf.gradients(self.a_loss, self.a_params)
-                    # self.c_grads = tf.gradients(self.c_loss, self.c_params)
-                    # self.sha_grads = tf.gradients(self.sha_loss, self.share_params)
 
             with tf.name_scope('sync'):
                 self.global_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global')
                 with tf.name_scope('pull'):
                     self.pull_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.local_vars, self.global_vars)]
-                    # self.pull_sha_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.share_params, glo.share_params)]
-                    # self.pull_a_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.a_params, glo.a_params)]
-                    # self.pull_c_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.c_params, glo.c_params)]
+
                 with tf.name_scope('push'):
-                    self.apply_grads = self.OPT.apply_gradients(zip(self.gradients, self.global_vars))
-                    # self.update_sha_op = self.OPT.apply_gradients(zip(self.sha_grads, glo.share_params))
-                    # self.update_a_op = self.OPT.apply_gradients(zip(self.a_grads, glo.a_params))
-                    # self.update_c_op = self.OPT.apply_gradients(zip(self.c_grads, glo.c_params))
+                    opt = tf.train.RMSPropOptimizer(args.lr, name='RMSPropA')
+                    self.apply_grads = opt.apply_gradients(zip(self.gradients, self.global_vars))
 
     def _network(self):
         """
@@ -112,20 +104,16 @@ class ACNet(object):
             l_c = tf.layers.dense(fc, 1, activation=None,
                                   kernel_initializer=init, name='fc')  # state value
 
-        # share_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='features')
-        # a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='actor')
-        # c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='critic')
-
         return l_a, l_c
 
     def update_global(self, feed_dict):  # run by a local
-        self.SESS.run([self.apply_grads], feed_dict)  # local grads applies to global net
+        self.sess.run([self.apply_grads], feed_dict)  # local grads applies to global net
 
     def pull_global(self):  # run by a local
-        self.SESS.run([self.pull_params_op])
+        self.sess.run([self.pull_params_op])
 
     def choose_action(self, s):  # run by a local
-        prob_weights = self.SESS.run(self.prob, feed_dict={self.belief_original: s[np.newaxis, :]})
+        prob_weights = self.sess.run(self.prob, feed_dict={self.belief_original: s[np.newaxis, :]})
         return np.random.choice(NUM_ACTION, replace=False, p=prob_weights.ravel())  # output_dims?
 
 
@@ -133,11 +121,12 @@ class Worker(object):
     """
     This class defines local agents
     """
-    def __init__(self, name, args, global_config):
+    def __init__(self, name, args, coord):
         self.name = name
         self.args = args
-        self.SESS, self.coord = global_config[-2:]
-        self.AC = ACNet(name, args, global_config)
+        self.coord = coord
+        self.AC = ACNet(name, args)
+        self.sess = tf.get_default_session()
 
     def work(self):
         """
@@ -169,13 +158,13 @@ class Worker(object):
                     if done:
                         v_s_ = 0  # terminal
                     else:
-                        v_s_ = self.SESS.run(self.AC.val, {self.AC.belief_original: belief_[np.newaxis, :]})
+                        v_s_ = self.sess.run(self.AC.val, {self.AC.belief_original: belief_[np.newaxis, :]})
                     buffer_v_target = []
                     for r in buffer_r[::-1]:  # reverse buffer_r
                         v_s_ = r + self.args.gamma * v_s_
                         buffer_v_target.append(v_s_)
                     buffer_v_target.reverse()
-                    # buffer_belief, buffer_a, buffer_v_target = np.array(buffer_belief), np.array(buffer_a)[:, np.newaxis], np.array(buffer_v_target)
+
                     feed_dict = {
                         self.AC.belief_original: np.array(buffer_belief),
                         self.AC.a_his: np.vstack(buffer_a),

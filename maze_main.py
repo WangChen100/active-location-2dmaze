@@ -49,35 +49,32 @@ if __name__ == '__main__':
     args = parser.parse_args()
     N_WORKERS = mp.cpu_count()
 
-    SESS = tf.Session()
+    with tf.Session().as_default() as sess:
+        with tf.device("/cpu:0"):
+            inference.ACNet('global', args)  # global network object of ACNet class
+            COORD = tf.train.Coordinator()
 
-    with tf.device("/cpu:0"):
-        OPT = tf.train.RMSPropOptimizer(args.lr, name='RMSPropA')
-        # OPT_C = tf.train.RMSPropOptimizer(args.lr, name='RMSPropC')
-        inference.ACNet('global', args)  # global network object of ACNet class
-        COORD = tf.train.Coordinator()
+            workers = []
+            # Create worker
+            for i in range(N_WORKERS):
+                i_name = 'W_%i' % i   # worker name
+                workers.append(inference.Worker(i_name, args, COORD))
 
-        workers = []
-        # Create worker
-        for i in range(N_WORKERS):
-            i_name = 'W_%i' % i   # worker name
-            workers.append(inference.Worker(i_name, args, (OPT, SESS, COORD)))
+        sess.run(tf.global_variables_initializer())
 
-    SESS.run(tf.global_variables_initializer())
+        if os.path.exists(args.log):
+            shutil.rmtree(args.log)
+        tf.summary.FileWriter(args.log, sess.graph)
 
-    if os.path.exists(args.log):
-        shutil.rmtree(args.log)
-    tf.summary.FileWriter(args.log, SESS.graph)
+        worker_threads = []
+        for worker in workers:
+            t = threading.Thread(target=worker.work())
+            t.start()
+            worker_threads.append(t)
+        COORD.join(worker_threads)
 
-    worker_threads = []
-    for worker in workers:
-        t = threading.Thread(target=worker.work())
-        t.start()
-        worker_threads.append(t)
-    COORD.join(worker_threads)
     print("mission complicated")
     # plt.plot(np.arange(len(GLOBAL_RUNNING_R)), GLOBAL_RUNNING_R)
     # plt.xlabel('step')
     # plt.ylabel('Total moving reward')
     # plt.show()
-
