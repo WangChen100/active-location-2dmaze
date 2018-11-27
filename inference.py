@@ -37,7 +37,7 @@ class ACNet(object):
                                                       shape=[None, NUM_ORIENTATION + 1, self.args.map_size,
                                                              self.args.map_size],
                                                       name='original_belief_data')
-                self.share_params, self.a_params, self.c_params, = self._network()[-3:]
+                self._network()
         else:
             with tf.variable_scope(scope):
                 self.belief_original = tf.placeholder(dtype=tf.float32,
@@ -50,9 +50,9 @@ class ACNet(object):
                 # self.dh = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'depth_history')
                 # self.th = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'time_history')
 
-                self.prob, self.val, self.share_params, self.a_params, self.c_params = self._network()
+                self.prob, self.val = self._network()
 
-                glo, self.OPT, self.SESS, _ = global_config
+                self.OPT, self.SESS, _ = global_config
 
                 self.a_his = tf.placeholder(tf.uint8, [None, 1], 'actions')
                 self.v_target = tf.placeholder(tf.float32, [None, 1], 'V_target')
@@ -64,27 +64,32 @@ class ACNet(object):
 
                 with tf.name_scope('actor_loss'):
                     log_prob = tf.log(self.prob)*tf.one_hot(self.a_his, NUM_ACTION, dtype=tf.float32)
-                    exp_v = log_prob * tf.stop_gradient(td)
-                    entropy = -(log_prob * self.prob)
-                    self.exp_v = exp_v + self.args.beta * entropy
-                    self.a_loss = tf.reduce_mean(-self.exp_v)
+                    self.policy_loss = tf.reduce_sum(log_prob * td)
+                    self.entropy = tf.reduce_sum(log_prob * self.prob)
 
-                self.sha_loss = self.a_loss+self.c_loss
+                self.loss = 0.5*self.c_loss-self.policy_loss - self.args.beta * self.entropy
 
                 with tf.name_scope('local_grad'):
-                    self.a_grads = tf.gradients(self.a_loss, self.a_params)
-                    self.c_grads = tf.gradients(self.c_loss, self.c_params)
-                    self.sha_grads = tf.gradients(self.sha_loss, self.share_params)
+                    self.local_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope)
+                    self.gradients = tf.gradients(self.loss, self.local_vars)
+                    self.var_norms = tf.global_norm(self.local_vars)
+                    # self.grads, self.grad_norms = tf.clip_by_global_norm(self.gradients, 40.0)
+                    # self.a_grads = tf.gradients(self.a_loss, self.a_params)
+                    # self.c_grads = tf.gradients(self.c_loss, self.c_params)
+                    # self.sha_grads = tf.gradients(self.sha_loss, self.share_params)
 
             with tf.name_scope('sync'):
+                self.global_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global')
                 with tf.name_scope('pull'):
-                    self.pull_sha_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.share_params, glo.share_params)]
-                    self.pull_a_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.a_params, glo.a_params)]
-                    self.pull_c_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.c_params, glo.c_params)]
+                    self.pull_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.local_vars, self.global_vars)]
+                    # self.pull_sha_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.share_params, glo.share_params)]
+                    # self.pull_a_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.a_params, glo.a_params)]
+                    # self.pull_c_params_op = [l_p.assign(g_p) for l_p, g_p in zip(self.c_params, glo.c_params)]
                 with tf.name_scope('push'):
-                    self.update_sha_op = self.OPT.apply_gradients(zip(self.sha_grads, glo.share_params))
-                    self.update_a_op = self.OPT.apply_gradients(zip(self.a_grads, glo.a_params))
-                    self.update_c_op = self.OPT.apply_gradients(zip(self.c_grads, glo.c_params))
+                    self.apply_grads = self.OPT.apply_gradients(zip(self.gradients, self.global_vars))
+                    # self.update_sha_op = self.OPT.apply_gradients(zip(self.sha_grads, glo.share_params))
+                    # self.update_a_op = self.OPT.apply_gradients(zip(self.a_grads, glo.a_params))
+                    # self.update_c_op = self.OPT.apply_gradients(zip(self.c_grads, glo.c_params))
 
     def _network(self):
         """
@@ -107,21 +112,21 @@ class ACNet(object):
             l_c = tf.layers.dense(fc, 1, activation=None,
                                   kernel_initializer=init, name='fc')  # state value
 
-        share_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='features')
-        a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='actor')
-        c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='critic')
+        # share_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='features')
+        # a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='actor')
+        # c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='critic')
 
-        return l_a, l_c, share_params, a_params, c_params
+        return l_a, l_c
 
     def update_global(self, feed_dict):  # run by a local
-        self.SESS.run([self.update_a_op, self.update_c_op], feed_dict)  # local grads applies to global net
+        self.SESS.run([self.apply_grads], feed_dict)  # local grads applies to global net
 
     def pull_global(self):  # run by a local
-        self.SESS.run([self.pull_a_params_op, self.pull_c_params_op])
+        self.SESS.run([self.pull_params_op])
 
     def choose_action(self, s):  # run by a local
         prob_weights = self.SESS.run(self.prob, feed_dict={self.belief_original: s[np.newaxis, :]})
-        return np.random.choice(NUM_ACTION, size=1, replace=False, p=prob_weights.ravel())[0]  # output_dims?
+        return np.random.choice(NUM_ACTION, replace=False, p=prob_weights.ravel())  # output_dims?
 
 
 class Worker(object):

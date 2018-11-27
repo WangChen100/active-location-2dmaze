@@ -27,17 +27,17 @@ parser.add_argument('--log', type=str, default="log/",
 parser.add_argument('-l', '--max-ep', type=int, default=30, metavar='L',
                     help='maximum length of an episode (default: 30)')
 parser.add_argument('-m', '--map-size', type=int, default=21,
-                    help='m(default: 7): Size of maze must be an odd natural number')
+                    help='m(default: 21): Size of maze must be an odd natural number')
 
 # A3C and model arguments
 parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                     help='learning rate (default: 0.001)')
-parser.add_argument('--max-step', type=int, default=20, metavar='NS',
-                    help='number of training iterations per training thread (default: 20)')
+parser.add_argument('--max-step', type=int, default=30, metavar='NS',
+                    help='number of training iterations per training thread (default: 30)')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G',
                     help='discount factor for rewards (default: 0.99)')
-parser.add_argument('--beta', type=float, default=0.1, metavar='BT',
-                    help='parameter for entropy (default: 0.1)')
+parser.add_argument('--beta', type=float, default=0.01, metavar='BT',
+                    help='parameter for entropy (default: 0.01)')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--hist-size', type=int, default=5,
@@ -54,14 +54,14 @@ if __name__ == '__main__':
     with tf.device("/cpu:0"):
         OPT = tf.train.RMSPropOptimizer(args.lr, name='RMSPropA')
         # OPT_C = tf.train.RMSPropOptimizer(args.lr, name='RMSPropC')
-        glo = inference.ACNet('global', args)  # global network object of ACNet class
+        inference.ACNet('global', args)  # global network object of ACNet class
         COORD = tf.train.Coordinator()
 
         workers = []
         # Create worker
         for i in range(N_WORKERS):
             i_name = 'W_%i' % i   # worker name
-            workers.append(inference.Worker(i_name, args, (glo, OPT, SESS, COORD)))
+            workers.append(inference.Worker(i_name, args, (OPT, SESS, COORD)))
 
     SESS.run(tf.global_variables_initializer())
 
@@ -75,7 +75,7 @@ if __name__ == '__main__':
         t.start()
         worker_threads.append(t)
     COORD.join(worker_threads)
-
+    print("mission complicated")
     # plt.plot(np.arange(len(GLOBAL_RUNNING_R)), GLOBAL_RUNNING_R)
     # plt.xlabel('step')
     # plt.ylabel('Total moving reward')
