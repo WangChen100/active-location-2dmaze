@@ -110,13 +110,14 @@ class ACNet(object):
         self.sess.run([self.pull_params_op])
 
     def choose_action(self, s):  # run by a local
+        act = 3
         prob_weights = self.sess.run(self.prob, feed_dict={self.belief_original: s[np.newaxis, :]})
         try:
-            action_id = np.random.choice(NUM_ACTION, replace=False, p=prob_weights.ravel())  # output_dims?
+            act = np.random.choice(NUM_ACTION, replace=False, p=prob_weights.ravel())  # output_dims?
         except ValueError:
             print("Error: prob_weights.ravel()")
             assert True, "Error!!"
-        return action_id
+        return act
 
 
 class Worker(object):
@@ -135,7 +136,9 @@ class Worker(object):
         To train local agents, update global parameters and pull into local parameters
         """
         env = Maze2D(self.args)
-
+        accuracy = 0
+        dist = 0
+        loc = np.array([0, 0])
         local_ep = 1
         local_step = 1
         buffer_belief, buffer_a, buffer_r, buffer_depth = [], [], [], []
@@ -144,12 +147,7 @@ class Worker(object):
         while not self.coord.should_stop() and local_ep < self.args.max_ep:
             belief, depth = env.reset()
             ep_r = 0
-            accuracy = 0
-            print(
-                self.name,
-                "Ep:", local_ep,
-                "| Ep_accuracy: %f" % (accuracy/local_ep),
-            )
+
             for ep_t in range(self.args.max_step):
 
                 a = self.AC.choose_action(belief)
@@ -186,6 +184,7 @@ class Worker(object):
 
                 belief = belief_
                 local_step += 1
+
                 if done:
                     # if len(GLOBAL_RUNNING_R) == 0:  # record running episode reward
                     #     GLOBAL_RUNNING_R.append(ep_r)
@@ -196,11 +195,15 @@ class Worker(object):
                     #     "Ep:", GLOBAL_EP,
                     #     "| Ep_r: %i" % GLOBAL_RUNNING_R[-1],
                     # )
-                    if len(loc) == 1:
-                        if self.distances(loc[0], label) < 5:
-                            accuracy += 1
+                    dist = self.distances(loc, label)
+                    if dist == 0:
+                        accuracy += 1
                     local_ep += 1
                     break
+        print(
+            self.name,
+            "Ep: %i,\t| Ep_accuracy: %f,\t| distance2truth: %f," %
+            (local_ep, (accuracy / self.args.max_ep), dist), loc)
 
     def show_loc(self, belief):
         plt.ion()
@@ -230,4 +233,4 @@ class Worker(object):
         :param p2:
         :return:
         """
-        return np.sum((p1-p2)*(p1-p2))
+        return np.sqrt(np.sum((p1-p2)*(p1-p2)))
