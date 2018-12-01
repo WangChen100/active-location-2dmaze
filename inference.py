@@ -7,18 +7,18 @@
 @contact: wangchen100@163.com
 @create_time: 18-11-22 下午4:53
 '''
+
 import math
 import numpy as np
-import matplotlib.pyplot as plt
+from collections import deque
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from maze2d import *
 
 A_BOUND = math.pi
-NUM_ORIENTATION = 4
-NUM_ACTION = 3
 UPDATE_GLOBAL_ITER = 3
-
+NUM_ACTION = 3
+NUM_HISTORY = 5  # NUM_HISTORY>=UPDATE_GLOBAL_ITER
 
 class ACNet(object):
     """
@@ -48,9 +48,13 @@ class ACNet(object):
                 # shape: [batch,channels,height,width] ==> [batch,height,width,channels]
                 self.belief = tf.transpose(self.belief_original, [0, 2, 3, 1], name='transpose_belief')
 
+                self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'action_history')
+                self.dh = tf.placeholder(tf.float32, [None], 'depth_history')
+                self.th = tf.placeholder(tf.float32, [None], 'time_history')
+
                 self.prob, self.val = self._network()
 
-                self.a_his = tf.placeholder(tf.uint8, [None, 1], 'actions')
+                self.a = tf.placeholder(tf.uint8, [None, 1], 'actions')
                 self.v_target = tf.placeholder(tf.float32, [None, 1], 'V_target')
 
                 td = tf.subtract(self.v_target, self.val, name='TD_error')
@@ -59,7 +63,7 @@ class ACNet(object):
                     self.c_loss = tf.reduce_mean(tf.square(td))
 
                 with tf.name_scope('actor_loss'):
-                    log_prob = tf.log(self.prob)*tf.one_hot(self.a_his, NUM_ACTION, dtype=tf.float32)
+                    log_prob = tf.log(self.prob)*tf.one_hot(self.a, NUM_ACTION, dtype=tf.float32)
                     self.policy_loss = tf.reduce_sum(log_prob * td)
                     self.entropy = tf.reduce_sum(log_prob * self.prob)
 
@@ -68,8 +72,8 @@ class ACNet(object):
                 with tf.name_scope('local_grad'):
                     self.local_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope)
                     self.gradients = tf.gradients(self.loss, self.local_vars)
-                    self.var_norms = tf.global_norm(self.local_vars)
-                    # self.grads, self.grad_norms = tf.clip_by_global_norm(self.gradients, 40.0)
+                    # self.var_norms = tf.global_norm(self.local_vars)
+                    self.grads, self.grad_norms = tf.clip_by_global_norm(self.gradients, 40.0)
 
             with tf.name_scope('sync'):
                 self.global_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global')
@@ -78,7 +82,7 @@ class ACNet(object):
 
                 with tf.name_scope('push'):
                     opt = tf.train.RMSPropOptimizer(args.lr, name='RMSPropA')
-                    self.apply_grads = opt.apply_gradients(zip(self.gradients, self.global_vars))
+                    self.apply_grads = opt.apply_gradients(zip(self.grads, self.global_vars))
 
     def _network(self):
         """
@@ -92,13 +96,13 @@ class ACNet(object):
             # conv1 = tf.nn.conv2d(self.belief, [3, 3, 5, 16], strides=[1, 2, 2,1], padding='SAME', name='conv_layer1')
             # conv2 = tf.nn.conv2d(conv1, [3, 3, 16, 16], strides=[1, 2, 2, 1], padding='SAME', name='conv_layer2')
             fc = tf.contrib.layers.fully_connected(tf.layers.flatten(conv), 256, scope='fc')
-            # fc_new = tf.concat(1, [fc, self.ah, self.dh, self.th])
+            fc_new = tf.concat(1, [fc, self.ah, self.dh, self.th])
 
         with tf.variable_scope('actor'):
-            l_a = tf.layers.dense(fc, NUM_ACTION, activation=tf.nn.softmax,
+            l_a = tf.layers.dense(fc_new, NUM_ACTION, activation=tf.nn.softmax,
                                   kernel_initializer=init, name='fc')
         with tf.variable_scope('critic'):
-            l_c = tf.layers.dense(fc, 1, activation=None,
+            l_c = tf.layers.dense(fc_new, 1, activation=None,
                                   kernel_initializer=init, name='fc')  # state value
 
         return l_a, l_c
@@ -140,25 +144,29 @@ class Worker(object):
         dist = 0
         loc = np.array([0, 0])
         local_ep = 1
-        local_step = 1
-        buffer_belief, buffer_a, buffer_r, buffer_depth = [], [], [], []
+
+        # batch buffer
+        buffer_belief, buffer_r, buffer_dh= [], [], []
+        ah = deque([3] * NUM_HISTORY, maxlen=NUM_HISTORY)
+        buffer_ah = deque(maxlen=UPDATE_GLOBAL_ITER)
+        for _ in range(UPDATE_GLOBAL_ITER):
+            buffer_ah.append(ah)
 
         # train local agent in following loop
         while not self.coord.should_stop() and local_ep < self.args.max_ep:
             belief, depth = env.reset()
-            ep_r = 0
 
-            for ep_t in range(self.args.max_step):
-
+            for local_step in range(1, self.args.max_step):
                 a = self.AC.choose_action(belief)
                 belief_, r, done, depth, loc, label = env.step(a)
-                done = True if ep_t == self.args.max_step - 1 else False
+                done = True if local_step == self.args.max_step - 1 else False
 
-                ep_r += r
+                # ep_r += r
                 buffer_belief.append(belief)
-                buffer_a.append(a)
+                ah.append(a)
+                buffer_ah.append(ah)
+                buffer_dh.append(depth)
                 buffer_r.append(r)
-                buffer_depth.append(depth)
 
                 if local_step % UPDATE_GLOBAL_ITER == 0 or done:  # update global and assign to local net
                     if done:
@@ -173,9 +181,11 @@ class Worker(object):
 
                     feed_dict = {
                         self.AC.belief_original: np.array(buffer_belief),
-                        self.AC.a_his: np.vstack(buffer_a),
-                        self.AC.v_target: np.vstack(buffer_v_target),
-                        # self.AC.: buffer_depth
+                        self.AC.a: np.vstack(np.array(ah)[-UPDATE_GLOBAL_ITER:]),
+                        self.AC.v_target: np.array(buffer_v_target),
+                        self.AC.ah: np.array(buffer_ah),
+                        self.AC.dh: np.vstack(buffer_dh),
+                        self.AC.th: np.vstack(range(-UPDATE_GLOBAL_ITER+1, 1))+local_step
                     }
 
                     self.AC.update_global(feed_dict)
@@ -200,31 +210,9 @@ class Worker(object):
                         accuracy += 1
                     local_ep += 1
                     break
-        print(
-            self.name,
-            "Ep: %i,\t| Ep_accuracy: %f,\t| distance2truth: %f," %
-            (local_ep, (accuracy / self.args.max_ep), dist), loc)
-
-    def show_loc(self, belief):
-        plt.ion()
-
-        plt.subplot(3, 2, 1)
-        plt.imshow(belief[0])
-
-        plt.subplot(3, 2, 2)
-        plt.imshow(belief[1])
-
-        plt.subplot(3, 2, 3)
-        plt.imshow(belief[2])
-
-        plt.subplot(3, 2, 4)
-        plt.imshow(belief[3])
-
-        plt.subplot(3, 1, 2)
-        plt.imshow(belief[4])
-
-        plt.pause(0.033)
-        plt.show()
+        print(self.name,
+              "Ep: %i,\t| Ep_accuracy: %f,\t| distance2truth: %f," %
+              (local_ep, (accuracy / self.args.max_ep), dist))
 
     def distances(self, p1, p2):
         """
