@@ -15,10 +15,9 @@ import tensorflow.contrib.slim as slim
 from maze2d import *
 
 A_BOUND = math.pi
-NUM_ORIENTATION = 4
-NUM_ACTION = 3
 UPDATE_GLOBAL_ITER = 3
-
+NUM_ACTION = 3
+NUM_HISTORY=8
 
 class ACNet(object):
     """
@@ -47,9 +46,9 @@ class ACNet(object):
                                                       name='original_belief_data')
                 # shape: [batch,channels,height,width] ==> [batch,height,width,channels]
                 self.belief = tf.transpose(self.belief_original, [0, 2, 3, 1], name='transpose_belief')
-                # self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY*NUM_ACTION], 'action_history')
-                # self.dh = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'depth_history')
-                # self.th = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'time_history')
+                self.ah = tf.placeholder(tf.float32, [None], 'action_history')
+                self.dh = tf.placeholder(tf.float32, [None], 'depth_history')
+                self.th = tf.placeholder(tf.float32, [None], 'time_history')
 
                 self.prob, self.val = self._network()
 
@@ -95,13 +94,13 @@ class ACNet(object):
             # conv1 = tf.nn.conv2d(self.belief, [3, 3, 5, 16], strides=[1, 2, 2,1], padding='SAME', name='conv_layer1')
             # conv2 = tf.nn.conv2d(conv1, [3, 3, 16, 16], strides=[1, 2, 2, 1], padding='SAME', name='conv_layer2')
             fc = tf.contrib.layers.fully_connected(tf.layers.flatten(conv), 256, scope='fc')
-            # fc_new = tf.concat(1, [fc, self.ah, self.dh, self.th])
+            fc_new = tf.concat(1, [fc, self.ah, self.dh, self.th])
 
         with tf.variable_scope('actor'):
-            l_a = tf.layers.dense(fc, NUM_ACTION, activation=tf.nn.softmax,
+            l_a = tf.layers.dense(fc_new, NUM_ACTION, activation=tf.nn.softmax,
                                   kernel_initializer=init, name='fc')
         with tf.variable_scope('critic'):
-            l_c = tf.layers.dense(fc, 1, activation=None,
+            l_c = tf.layers.dense(fc_new, 1, activation=None,
                                   kernel_initializer=init, name='fc')  # state value
 
         return l_a, l_c
@@ -152,7 +151,6 @@ class Worker(object):
                 buffer_belief.append(belief)
                 buffer_a.append(a)
                 buffer_r.append(r)
-                buffer_depth.append(depth)
 
                 if local_step % UPDATE_GLOBAL_ITER == 0 or done:  # update global and assign to local net
                     if done:
@@ -169,7 +167,7 @@ class Worker(object):
                         self.AC.belief_original: np.array(buffer_belief),
                         self.AC.a_his: np.vstack(buffer_a),
                         self.AC.v_target: np.vstack(buffer_v_target),
-                        # self.AC.: buffer_depth
+                        self.AC.: np.vstack(depth)
                     }
 
                     self.AC.update_global(feed_dict)

@@ -3,6 +3,8 @@ import numpy as np
 from utils.maze import *
 from utils.localization import *
 
+NUM_ORIENTATION = 4
+
 
 class Maze2D(object):
     """
@@ -37,7 +39,7 @@ class Maze2D(object):
 
             # Get random initial position and orientation of the agent
             self.position = get_random_position(self.map_design)
-            self.orientation = np.random.randint(4)
+            self.orientation = np.random.randint(NUM_ORIENTATION)
 
             maze = np.concatenate((self.map_design.flatten(),
                                    np.array(self.position),
