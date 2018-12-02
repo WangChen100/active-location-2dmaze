@@ -20,6 +20,7 @@ UPDATE_GLOBAL_ITER = 3
 NUM_ACTION = 3
 NUM_HISTORY = 5  # NUM_HISTORY>=UPDATE_GLOBAL_ITER
 
+
 class ACNet(object):
     """
     This class defines actor-critic model
@@ -38,6 +39,9 @@ class ACNet(object):
                                                       shape=[None, NUM_ORIENTATION + 1, self.args.map_size,
                                                              self.args.map_size],
                                                       name='original_belief_data')
+                self.ah = tf.placeholder(dtype=tf.float32, shape=[None, NUM_HISTORY], name='action_history')
+                self.dh = tf.placeholder(dtype=tf.float32, shape=[None, 1], name='depth_history')
+                self.th = tf.placeholder(dtype=tf.float32, shape=[None, 1], name='time_history')
                 self._network()
         else:
             with tf.variable_scope(scope):
@@ -47,10 +51,9 @@ class ACNet(object):
                                                       name='original_belief_data')
                 # shape: [batch,channels,height,width] ==> [batch,height,width,channels]
                 self.belief = tf.transpose(self.belief_original, [0, 2, 3, 1], name='transpose_belief')
-
                 self.ah = tf.placeholder(tf.float32, [None, NUM_HISTORY], 'action_history')
-                self.dh = tf.placeholder(tf.float32, [None], 'depth_history')
-                self.th = tf.placeholder(tf.float32, [None], 'time_history')
+                self.dh = tf.placeholder(tf.float32, [None, 1], 'depth_history')
+                self.th = tf.placeholder(tf.float32, [None, 1], 'time_history')
 
                 self.prob, self.val = self._network()
 
@@ -96,7 +99,7 @@ class ACNet(object):
             # conv1 = tf.nn.conv2d(self.belief, [3, 3, 5, 16], strides=[1, 2, 2,1], padding='SAME', name='conv_layer1')
             # conv2 = tf.nn.conv2d(conv1, [3, 3, 16, 16], strides=[1, 2, 2, 1], padding='SAME', name='conv_layer2')
             fc = tf.contrib.layers.fully_connected(tf.layers.flatten(conv), 256, scope='fc')
-            fc_new = tf.concat(1, [fc, self.ah, self.dh, self.th])
+            fc_new = tf.concat([fc, self.ah, self.dh, self.th], axis=1)
 
         with tf.variable_scope('actor'):
             l_a = tf.layers.dense(fc_new, NUM_ACTION, activation=tf.nn.softmax,
@@ -113,9 +116,9 @@ class ACNet(object):
     def pull_global(self):  # run by a local
         self.sess.run([self.pull_params_op])
 
-    def choose_action(self, s):  # run by a local
+    def choose_action(self, feed_dict):  # run by a local
         act = 3
-        prob_weights = self.sess.run(self.prob, feed_dict={self.belief_original: s[np.newaxis, :]})
+        prob_weights = self.sess.run(self.prob, feed_dict)
         try:
             act = np.random.choice(NUM_ACTION, replace=False, p=prob_weights.ravel())  # output_dims?
         except ValueError:
@@ -146,18 +149,29 @@ class Worker(object):
         local_ep = 1
 
         # batch buffer
-        buffer_belief, buffer_r, buffer_dh= [], [], []
-        ah = deque([3] * NUM_HISTORY, maxlen=NUM_HISTORY)
+        buffer_belief = deque(maxlen=UPDATE_GLOBAL_ITER)
+        buffer_r = deque(maxlen=UPDATE_GLOBAL_ITER)
         buffer_ah = deque(maxlen=UPDATE_GLOBAL_ITER)
-        for _ in range(UPDATE_GLOBAL_ITER):
-            buffer_ah.append(ah)
+        buffer_dh = deque(maxlen=UPDATE_GLOBAL_ITER)
 
         # train local agent in following loop
         while not self.coord.should_stop() and local_ep < self.args.max_ep:
             belief, depth = env.reset()
+            belief, depth = env.reset()
+            buffer_belief.clear()
+            buffer_r.clear()
+            buffer_ah.clear()
+            buffer_dh.clear()
+            ah = deque([3] * NUM_HISTORY, maxlen=NUM_HISTORY)
+            for _ in range(UPDATE_GLOBAL_ITER):
+                buffer_ah.append(ah)
 
             for local_step in range(1, self.args.max_step):
-                a = self.AC.choose_action(belief)
+                act_feed_dict = {self.AC.belief_original: belief[np.newaxis, :],
+                                 self.AC.ah: np.expand_dims(ah, axis=0),
+                                 self.AC.dh: np.expand_dims([depth], axis=0),
+                                 self.AC.th: np.expand_dims([local_step], axis=0)}
+                a = self.AC.choose_action(act_feed_dict)
                 belief_, r, done, depth, loc, label = env.step(a)
                 done = True if local_step == self.args.max_step - 1 else False
 
@@ -172,24 +186,27 @@ class Worker(object):
                     if done:
                         v_s_ = 0  # terminal
                     else:
-                        v_s_ = self.sess.run(self.AC.val, {self.AC.belief_original: belief_[np.newaxis, :]})
+                        val_feed_dict = {self.AC.belief_original: belief_[np.newaxis, :],
+                                         self.AC.ah: np.expand_dims(ah, axis=0),
+                                         self.AC.dh: np.expand_dims([depth], axis=0),
+                                         self.AC.th: np.expand_dims([local_step + 1], axis=0)}  # forecast?
+                        v_s_ = self.sess.run(self.AC.val, feed_dict=val_feed_dict)
                     buffer_v_target = []
-                    for r in buffer_r[::-1]:  # reverse buffer_r
+                    for r in list(buffer_r)[::-1]:  # reverse buffer_r
                         v_s_ = r + self.args.gamma * v_s_
                         buffer_v_target.append(v_s_)
                     buffer_v_target.reverse()
 
                     feed_dict = {
                         self.AC.belief_original: np.array(buffer_belief),
-                        self.AC.a: np.vstack(np.array(ah)[-UPDATE_GLOBAL_ITER:]),
-                        self.AC.v_target: np.array(buffer_v_target),
+                        self.AC.a: np.vstack(np.array(ah)[-UPDATE_GLOBAL_ITER:]),  # deque don't support [-xx:]
+                        self.AC.v_target: np.vstack(buffer_v_target),
                         self.AC.ah: np.array(buffer_ah),
                         self.AC.dh: np.vstack(buffer_dh),
-                        self.AC.th: np.vstack(range(-UPDATE_GLOBAL_ITER+1, 1))+local_step
-                    }
+                        self.AC.th: np.vstack(range(-UPDATE_GLOBAL_ITER + 1, 1)) + local_step}
 
                     self.AC.update_global(feed_dict)
-                    buffer_belief, buffer_a, buffer_r = [], [], []
+
                     self.AC.pull_global()
 
                 belief = belief_
