@@ -157,6 +157,14 @@ class Worker(object):
         # train local agent in following loop
         while not self.coord.should_stop() and local_ep < self.args.max_ep:
             belief, depth = env.reset()
+            belief, depth = env.reset()
+            buffer_belief.clear()
+            buffer_r.clear()
+            buffer_ah.clear()
+            buffer_dh.clear()
+            ah = deque([3] * NUM_HISTORY, maxlen=NUM_HISTORY)
+            for _ in range(UPDATE_GLOBAL_ITER):
+                buffer_ah.append(ah)
 
             buffer_belief.clear()
             buffer_r.clear()
