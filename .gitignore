@@ -2,6 +2,7 @@ log/
 saved/
 .idea/
 utils/
+__pycache__/
 !utils/maze.py
 !utils/localization.py
 !utils/__init__.py
